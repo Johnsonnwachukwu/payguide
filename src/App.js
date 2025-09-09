@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {GoogleGenAI} from '@google/genai';
 
 
-const genAI = new GoogleGenAI({apiKey:"Your_API_Key"});
+const genAI = new GoogleGenAI({apiKey:"YOUR_API_KEY"});
 
 
 
@@ -104,9 +104,29 @@ const findLocalizedResult = (geminiResult, language) => {
 
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
+    console.log("📄 Converting file to base64:", file.name, file.type, file.size);
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('File must be an image'));
+      return;
+    }
+    
+    // Check file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      reject(new Error('File too large. Maximum size is 10MB'));
+      return;
+    }
+    
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result); // includes data:image/png;base64,...
-    reader.onerror = reject;
+    reader.onload = () => {
+      console.log("✅ File converted to base64 successfully");
+      resolve(reader.result); // includes data:image/png;base64,...
+    };
+    reader.onerror = (error) => {
+      console.error("❌ FileReader error:", error);
+      reject(new Error('Failed to read file'));
+    };
     reader.readAsDataURL(file);
   });
 };
@@ -142,36 +162,59 @@ const extractCurrencyResult = (response) => {
 };
 
 const fetchGeminiResponse = async (strippedBase64, mimeType) => {
-     const prompt = `Identify the Nigerian currency denomination in the image. 
+  try {
+    console.log("🤖 Calling Gemini API with mimeType:", mimeType);
+    
+    const prompt = `Identify the Nigerian currency denomination in the image. 
     Return ONLY in this format:
     "₦1000 - Nigerian Naira", "₦500 - Nigerian Naira", 
     "₦200 - Nigerian Naira", "₦100 - Nigerian Naira", 
     "₦50 - Nigerian Naira", "₦20 - Nigerian Naira", 
     "₦10 - Nigerian Naira", "₦5 - Nigerian Naira".
     Do NOT explain anything. Just give the exact match.`;
-   const model = "gemini-2.5-flash";  
-   const result = await genAI.models.generateContent({
-    contents:{
-          inlineData: {
-         data: strippedBase64,
-         mimeType: mimeType ?? 'image/png',
-       },
-       role: 'user',
-      //  parts: [{ text: prompt }]
-      prompt,
-    },
+    
+    const model = "gemini-2.5-flash";  
+    
+    const result = await genAI.models.generateContent({
+      contents: {
+        inlineData: {
+          data: strippedBase64,
+          mimeType: mimeType ?? 'image/png',
+        },
+        role: 'user',
+        prompt,
+      },
       model,
     });
 
+    console.log("✅ Gemini API response:", result);
     const response = result.text;
+    console.log("✅ Extracted text:", response);
+    
     return extractCurrencyResult(response);
+  } catch (error) {
+    console.error("❌ Gemini API error:", error);
+    throw new Error(`Gemini API failed: ${error.message}`);
+  }
 }
 const detectWithGemini = async (file) => {
-   const base64 = await convertFileToBase64(file); 
-   const strippedBase64 = base64.split(',')[1]; 
-   const geminiResponse = await fetchGeminiResponse(strippedBase64, file.mimeType);
-   return geminiResponse;  
-
+  try {
+    console.log("📁 Processing uploaded file:", file.name, file.type, file.size);
+    
+    const base64 = await convertFileToBase64(file); 
+    console.log("✅ File converted to base64, length:", base64.length);
+    
+    const strippedBase64 = base64.split(',')[1]; 
+    console.log("✅ Base64 stripped, length:", strippedBase64.length);
+    
+    const geminiResponse = await fetchGeminiResponse(strippedBase64, file.type);
+    console.log("✅ Gemini response received:", geminiResponse);
+    
+    return geminiResponse;  
+  } catch (error) {
+    console.error("❌ Error in detectWithGemini:", error);
+    throw error;
+  }
 }
 
 function App() {
@@ -180,14 +223,36 @@ function App() {
   const [error, setError] = useState("");
   const [language, setLanguage] = useState("en");
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isLoadingCamera, setIsLoadingCamera] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const resetApp = () => {
+    console.log("🔄 Resetting app...");
     setImage(null);
     setResult("");
     setError("");
     setIsCameraOn(false);
+    setIsLoadingCamera(false);
+    setIsDetecting(false);
+    
+    // Stop camera stream if active
+    if (videoRef.current && videoRef.current.srcObject) {
+      console.log("📹 Stopping camera stream...");
+      const stream = videoRef.current.srcObject;
+      const tracks = stream.getTracks();
+      tracks.forEach(track => {
+        track.stop();
+        console.log("🛑 Stopped track:", track.kind);
+      });
+      videoRef.current.srcObject = null;
+    }
+    
+    // Clear any ongoing speech
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
   };
 
   // eslint-disable-next-line
@@ -198,7 +263,32 @@ function App() {
 
   const speakText = (text) => {
     if ("speechSynthesis" in window) {
+      // Cancel any ongoing speech
+      speechSynthesis.cancel();
+      
+      console.log("🔊 Speaking text:", text);
+      
       const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.9; // Slightly slower for better understanding
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      
+      // Use a specific voice if available (for consistency)
+      const voices = speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice => 
+        voice.lang.includes('en') && 
+        (voice.name.includes('Google') || voice.name.includes('Microsoft') || voice.name.includes('Samantha'))
+      );
+      
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        console.log("🎤 Using voice:", preferredVoice.name);
+      }
+      
+      utterance.onstart = () => console.log("🔊 Speech started:", text);
+      utterance.onend = () => console.log("🔇 Speech completed");
+      utterance.onerror = (event) => console.error("❌ Speech error:", event.error);
+      
       speechSynthesis.speak(utterance);
     }
   };
@@ -207,48 +297,140 @@ function App() {
     const file = event.target.files[0];
     if (!file) return;
 
-    setError("");
-    setResult(translations[language].detecting);
+    // Speak immediately when image is selected
     speakText(translations[language].detecting);
-    const geminiResponse = await detectWithGemini(file);
-    const localizedResult = findLocalizedResult(geminiResponse, language);
-    setResult(localizedResult);
-    speakText(localizedResult);
+
+    setError("");
+    setIsDetecting(true);
+    setResult(translations[language].detecting);
+    
+    try {
+      console.log("📤 Starting image upload processing...");
+      
+      // Pass the file object directly and use file.type for mimeType
+      const geminiResponse = await detectWithGemini(file);
+      const localizedResult = findLocalizedResult(geminiResponse, language);
+      
+      console.log("✅ Upload processing completed successfully");
+      console.log("📝 Upload result text:", localizedResult);
+      setResult(localizedResult);
+      setIsDetecting(false);
+      speakText(localizedResult);
+    } catch (error) {
+      console.error("❌ Upload processing error:", error);
+      
+      let errorMessage = "Failed to process image. ";
+      if (error.message.includes('File must be an image')) {
+        errorMessage = "Please select a valid image file.";
+      } else if (error.message.includes('File too large')) {
+        errorMessage = "Image file is too large. Please select a smaller image.";
+      } else if (error.message.includes('Gemini API failed')) {
+        errorMessage = "Currency detection service is temporarily unavailable. Please try again.";
+      } else if (error.message.includes('Failed to read file')) {
+        errorMessage = "Could not read the image file. Please try a different image.";
+      } else {
+        errorMessage += "Please try again.";
+      }
+      
+      setError(errorMessage);
+      setIsDetecting(false);
+      speakText("Failed to process image. Please try again.");
+    }
   };
 
 
 const startCamera = async () => {
+  console.log("🎥 Starting camera initialization...");
+  setIsLoadingCamera(true);
+  setError("");
+  
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" }, 
-      audio: false,
-    });
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play(); 
+    // Check if getUserMedia is supported
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Camera not supported in this browser");
     }
 
-    setIsCameraOn(true);
+    console.log("📱 Requesting camera access...");
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false
+    });
+    
+    console.log("✅ Camera stream obtained:", stream);
+    console.log("📊 Stream tracks:", stream.getTracks());
+
+    // Set the stream to video element immediately
+    if (videoRef.current) {
+      console.log("🎬 Setting video source...");
+      videoRef.current.srcObject = stream;
+      
+      // Show camera immediately
+      console.log("📹 Showing camera...");
+      setIsLoadingCamera(false);
+      setIsCameraOn(true);
+      
+      // Try to play the video
+      videoRef.current.play().then(() => {
+        console.log("▶️ Video playing successfully");
+      }).catch(err => {
+        console.log("❌ Video play failed, but camera is shown:", err);
+      });
+    } else {
+      console.error("❌ Video ref not available");
+      setError("Video element not found");
+      setIsLoadingCamera(false);
+    }
   } catch (error) {
-    console.error("Error accessing camera:", error);
-    alert("Camera access failed. Please allow permissions.");
+    console.error("❌ Camera access error:", error);
+    setIsLoadingCamera(false);
+    
+    let errorMessage = "Camera access failed: ";
+    if (error.name === 'NotAllowedError') {
+      errorMessage += "Permission denied. Please allow camera access.";
+    } else if (error.name === 'NotFoundError') {
+      errorMessage += "No camera found on this device.";
+    } else if (error.name === 'NotSupportedError') {
+      errorMessage += "Camera not supported in this browser.";
+    } else {
+      errorMessage += error.message;
+    }
+    
+    setError(errorMessage);
+    alert(errorMessage);
   }
 };
 
 
- const captureImage = async() => {
-  if (!videoRef.current || !canvasRef.current) return;
-
-  const video = videoRef.current;
-  const canvas = canvasRef.current;
-
-  // Avoid 0x0 canvas bug
-  if (video.videoWidth === 0 || video.videoHeight === 0) {
-    alert("Video not ready yet. Please wait a second and try again.");
+const captureImage = async() => {
+  if (!videoRef.current || !canvasRef.current) {
+    console.error("❌ Video or canvas ref not available");
     return;
   }
 
+  const video = videoRef.current;
+  const canvas = canvasRef.current;
+  console.log("📸 Capturing image...");
+
+  // Wait for video to be ready
+  if (video.videoWidth === 0 || video.videoHeight === 0) {
+    console.log("⏳ Waiting for video to be ready...");
+    await new Promise((resolve) => {
+      const handler = () => {
+        video.removeEventListener('loadedmetadata', handler);
+        resolve();
+      };
+      video.addEventListener('loadedmetadata', handler);
+    });
+  }
+
+  // Avoid 0x0 canvas bug
+  if (video.videoWidth === 0 || video.videoHeight === 0) {
+    console.error("❌ Video not ready - dimensions are 0x0");
+    setError("Video not ready yet. Please wait a second and try again.");
+    return;
+  }
+
+  console.log("🎨 Drawing image to canvas...");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
 
@@ -256,21 +438,48 @@ const startCamera = async () => {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const imgData = canvas.toDataURL("image/png");
+  console.log("✅ Image captured successfully");
+  
+  // Speak immediately when image is captured
+  speakText(translations[language].detecting);
+  
+  // Clean up camera immediately
   setIsCameraOn(false);
-  setImage(imgData); 
-  const mimeType = imgData.substring(
-    imgData.indexOf(":") + 1,
-    imgData.indexOf(";")
-  );
+  setImage(imgData);
+  setIsDetecting(true);
+  setResult(translations[language].detecting);
+  
+  // Stop camera stream
+  if (video.srcObject) {
+    const stream = video.srcObject;
+    const tracks = stream.getTracks();
+    tracks.forEach(track => track.stop());
+    video.srcObject = null;
+  }
 
-  const strippedBase64 = imgData.split(",")[1];
-  const geminiResponse = await fetchGeminiResponse(strippedBase64, mimeType);
-  const localizedResult = findLocalizedResult(geminiResponse, language);
-  setResult(localizedResult);
-  speakText(localizedResult);
+  // Process with Gemini API
+  try {
+    console.log("🤖 Sending to Gemini API...");
+    const mimeType = imgData.substring(
+      imgData.indexOf(":") + 1,
+      imgData.indexOf(";")
+    );
 
-
- 
+    const strippedBase64 = imgData.split(",")[1];
+    const geminiResponse = await fetchGeminiResponse(strippedBase64, mimeType);
+    const localizedResult = findLocalizedResult(geminiResponse, language);
+    
+    console.log("✅ Gemini response received:", localizedResult);
+    console.log("📝 Capture result text:", localizedResult);
+    setResult(localizedResult);
+    setIsDetecting(false);
+    speakText(localizedResult);
+  } catch (error) {
+    console.error("❌ Gemini API error:", error);
+    setError("Failed to process image. Please try again.");
+    setIsDetecting(false);
+    speakText("Failed to process image. Please try again.");
+  }
 };
 
 const requestCameraPermission = async () => {
@@ -337,13 +546,19 @@ const requestCameraPermission = async () => {
       </label>
 
       {/* Live Camera Toggle */}
-      {!isCameraOn ? (
+      {!isCameraOn && !isLoadingCamera ? (
         <button
           onClick={requestCameraPermission}
           className="bg-green-500 px-6 py-3 rounded-lg shadow-lg font-semibold hover:bg-green-700 transition-all mb-3"
         >
-          {/* {translations[language].camera} */}
-          snap
+          {translations[language].camera}
+        </button>
+      ) : isLoadingCamera ? (
+        <button
+          disabled
+          className="bg-yellow-500 px-6 py-3 rounded-lg shadow-lg font-semibold opacity-75 mb-3"
+        >
+          Loading Camera...
         </button>
       ) : (
         <button
@@ -354,28 +569,103 @@ const requestCameraPermission = async () => {
         </button>
       )}
 
-      {/* Camera Preview */}
-      {isCameraOn && (
-        <video 
-        ref={videoRef} 
-         autoPlay
-         playsInline
-         muted 
+      {/* Camera Preview - Always render video element */}
+      <div className="relative mt-4 flex justify-center">
+        <div className="relative">
+          <video 
+            ref={videoRef} 
+            autoPlay
+            playsInline
+            muted
+            className={`w-96 h-72 object-cover rounded-xl shadow-2xl border-4 border-white ${!isCameraOn ? 'hidden' : ''}`}
+            style={{ 
+              backgroundColor: '#000',
+              // Remove mirror effect for more natural feel
+            }}
+          />
+          {isCameraOn && (
+            <div className="absolute inset-0 flex flex-col items-center justify-between p-4">
+              {/* Top overlay */}
+              <div className="text-white text-sm bg-black bg-opacity-70 px-4 py-2 rounded-lg font-medium">
+                📷 Position Nigerian currency in view
+              </div>
+              
+              {/* Bottom overlay with instructions */}
+              <div className="text-white text-xs bg-black bg-opacity-70 px-3 py-2 rounded-lg text-center">
+                Tap "Capture Image" when ready
+              </div>
+              
+              {/* Corner guides */}
+              <div className="absolute top-4 left-4 w-8 h-8 border-2 border-yellow-400 rounded-lg"></div>
+              <div className="absolute top-4 right-4 w-8 h-8 border-2 border-yellow-400 rounded-lg"></div>
+              <div className="absolute bottom-4 left-4 w-8 h-8 border-2 border-yellow-400 rounded-lg"></div>
+              <div className="absolute bottom-4 right-4 w-8 h-8 border-2 border-yellow-400 rounded-lg"></div>
+            </div>
+          )}
+        </div>
+      </div>
 
-        className="w-64 h-auto mt-3 rounded-lg shadow-lg"></video>
+      {/* Loading Camera State */}
+      {isLoadingCamera && (
+        <div className="mt-4 flex justify-center">
+          <div className="w-96 h-72 bg-gray-800 rounded-xl shadow-2xl border-4 border-white flex items-center justify-center">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-white mx-auto mb-4"></div>
+              <div className="text-white text-lg mb-3 font-medium">Initializing Camera...</div>
+              <div className="text-white text-sm mb-4">Please allow camera permissions</div>
+              <button
+                onClick={() => {
+                  console.log("Force camera on - user clicked");
+                  setIsLoadingCamera(false);
+                  setIsCameraOn(true);
+                }}
+                className="text-sm bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg transition-colors font-medium"
+              >
+                Force Camera On
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Capture Image Canvas (Hidden) */}
       <canvas ref={canvasRef} style={{ display: "none" }}></canvas>
 
+
+      {/* Currency Detection Loading */}
+      {isDetecting && (
+        <div className="mt-6 flex justify-center">
+          <div className="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-6 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-white mx-auto mb-4"></div>
+            <div className="text-white text-lg font-medium mb-2">Detecting Currency...</div>
+            <div className="text-white text-sm opacity-80">Please wait while we analyze your image</div>
+          </div>
+        </div>
+      )}
+
       {/* Error Message */}
-      {error && <p className="mt-4 text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-red-400 text-center">{error}</p>}
 
       {/* Display Uploaded or Captured Image */}
-      {image && <img src={image} alt="Detected Currency" className="mt-6 w-48 h-auto rounded-lg shadow-lg border-2 border-white" />}
+      {image && (
+        <div className="mt-6 flex justify-center">
+          <img 
+            src={image} 
+            alt="Detected Currency" 
+            className="w-64 h-auto rounded-xl shadow-2xl border-4 border-white object-cover"
+          />
+        </div>
+      )}
 
       {/* Detection Result */}
-      {result && <p className="mt-6 text-2xl font-semibold text-green-300">{result}</p>}
+      {result && !isDetecting && (
+        <div className="mt-6 text-center">
+          <p className="text-2xl font-semibold text-green-300 mb-2">{result}</p>
+          <div className="text-white text-sm opacity-80">
+            Currency detected successfully!
+          </div>
+        </div>
+      )}
     </div>
   );
 }
