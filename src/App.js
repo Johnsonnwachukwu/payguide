@@ -3,7 +3,12 @@ import { motion } from "framer-motion";
 import {GoogleGenAI} from '@google/genai';
 
 
-const genAI = new GoogleGenAI({apiKey:"YOUR_API_KEY"});
+// Check if API key is available
+if (!process.env.REACT_APP_GEMINI_API_KEY) {
+  console.error("❌ REACT_APP_GEMINI_API_KEY is not set in environment variables");
+}
+
+const genAI = new GoogleGenAI({apiKey: process.env.REACT_APP_GEMINI_API_KEY});
 
 
 
@@ -350,11 +355,31 @@ const startCamera = async () => {
       throw new Error("Camera not supported in this browser");
     }
 
-    console.log("📱 Requesting camera access...");
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
-    });
+    console.log("📱 Requesting rear camera access...");
+    let stream;
+    
+    try {
+      // Try to get rear camera first
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { exact: "environment" }, // Force rear camera only
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+    } catch (rearCameraError) {
+      console.log("⚠️ Rear camera not available, trying fallback...");
+      // Fallback to any camera if rear camera fails
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment", // Prefer rear camera but allow others
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+    }
     
     console.log("✅ Camera stream obtained:", stream);
     console.log("📊 Stream tracks:", stream.getTracks());
@@ -388,9 +413,11 @@ const startCamera = async () => {
     if (error.name === 'NotAllowedError') {
       errorMessage += "Permission denied. Please allow camera access.";
     } else if (error.name === 'NotFoundError') {
-      errorMessage += "No camera found on this device.";
+      errorMessage += "No rear camera found on this device. Please use a device with a rear camera.";
     } else if (error.name === 'NotSupportedError') {
       errorMessage += "Camera not supported in this browser.";
+    } else if (error.name === 'OverconstrainedError') {
+      errorMessage += "Rear camera not available. Please use a device with a rear camera.";
     } else {
       errorMessage += error.message;
     }
