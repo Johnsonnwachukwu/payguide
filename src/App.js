@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {GoogleGenAI} from '@google/genai';
 
 
-const genAI = new GoogleGenAI({apiKey:"YOUR_API_KEY"});
+const genAI = new GoogleGenAI({apiKey:"AIzaSyAopgyxERxP4mDU92eqhZVx2W9I2L2dsp0"});
 
 
 
