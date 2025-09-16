@@ -3,12 +3,16 @@ import { motion } from "framer-motion";
 import {GoogleGenAI} from '@google/genai';
 
 
-// Check if API key is available
-if (!process.env.REACT_APP_GEMINI_API_KEY) {
-  console.error("❌ REACT_APP_GEMINI_API_KEY is not set in environment variables");
-}
+const genAI = new GoogleGenAI({apiKey:"AIzaSyAopgyxERxP4mDU92eqhZVx2W9I2L2dsp0"});
 
-const genAI = new GoogleGenAI({apiKey: process.env.REACT_APP_GEMINI_API_KEY});
+
+
+// const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
+// if (!apiKey) {
+//   console.error("❌ Gemini API Key is missing! Check your .env file.");
+// }
+// const genAI = apiKey ? new GoogleGenAI(apiKey) : null;
+
 
 
 
@@ -698,8 +702,5 @@ const requestCameraPermission = async () => {
 }
 
 export default App;
-
-
-
 
 
